@@ -31,4 +31,12 @@ resource "azurerm_logic_app_standard" "main" {
   storage_account_name       = azurerm_storage_account.main.name
   storage_account_access_key = azurerm_storage_account.main.primary_access_key
   version = "~4"
+
+  identity {
+    type = "SystemAssigned"
+  }
+
+  app_settings = {
+    "FUNCTIONS_WORKER_RUNTIME" = "dotnet"
+  }
 }
