@@ -1,0 +1,148 @@
+{
+  "definition": {
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "actions": {
+          "Get_file_content": {
+              "type": "ApiConnection",
+              "inputs": {
+                  "host": {
+                      "connection": {
+                          "referenceName": "sharepointonline"
+                      }
+                  },
+                  "method": "get",
+                  "path": "/datasets/@{encodeURIComponent(encodeURIComponent('https://163gc.sharepoint.com/sites/DigitalTransformationProcessImprovement'))}/files/@{encodeURIComponent(triggerBody()?['ID'])}/content",
+                  "queries": {
+                      "inferContentType": true
+                  }
+              },
+              "runAfter": {}
+          },
+          "Parse_a_document": {
+              "type": "ParseDocument",
+              "inputs": {
+                  "content": "@body('Get_file_content')"
+              },
+              "runAfter": {
+                  "Get_file_content": [
+                      "SUCCEEDED"
+                  ]
+              }
+          },
+          "Chunk_text": {
+              "type": "ChunkText",
+              "inputs": {
+                  "chunkingStrategy": "TokenSize",
+                  "text": "@body('Parse_a_document')?['text']",
+                  "EncodingModel": "cl200k_base",
+                  "TokenSize": 5000,
+                  "PageOverlapLength": 0
+              },
+              "runAfter": {
+                  "Parse_a_document": [
+                      "SUCCEEDED"
+                  ]
+              }
+          },
+          "Get_multiple_embeddings": {
+              "type": "ServiceProvider",
+              "inputs": {
+                  "parameters": {
+                      "deploymentId": "gpt4o",
+                      "input": "@body('Chunk_text')?['value']"
+                  },
+                  "serviceProviderConfiguration": {
+                      "connectionName": "openai-1_sharepoint-index-template",
+                      "operationId": "getArrayEmbeddings",
+                      "serviceProviderId": "/serviceProviders/openai"
+                  }
+              },
+              "runAfter": {
+                  "Chunk_text": [
+                      "SUCCEEDED"
+                  ]
+              }
+          },
+          "Select": {
+              "type": "Select",
+              "inputs": {
+                  "from": "@range(0, length(body('Chunk_text')['value']))",
+                  "select": {
+                      "content": "@body('Chunk_text')['value'][item()]",
+                      "documentName": "@parameters('AISearch_Schema_DocumentName_sharepoint-index-template')",
+                      "embeddings": "@body('Get_multiple_embeddings')['embeddings'][item()]",
+                      "id": "@concat(parameters('AISearch_Schema_ID_sharepoint-index-template'), item())"
+                  }
+              },
+              "runAfter": {
+                  "Get_multiple_embeddings": [
+                      "SUCCEEDED"
+                  ]
+              },
+              "runtimeConfiguration": {
+                  "staticResult": {
+                      "name": "Select0",
+                      "staticResultOptions": "Enabled"
+                  }
+              }
+          },
+          "For_each": {
+              "type": "foreach",
+              "foreach": "@outputs('Select')['body']",
+              "actions": {
+                  "Index_multiple_documents": {
+                      "type": "ServiceProvider",
+                      "inputs": {
+                          "parameters": {
+                              "indexName": "dto-index-test",
+                              "documents": "@item()"
+                          },
+                          "serviceProviderConfiguration": {
+                              "connectionName": "azureaisearch-1",
+                              "operationId": "indexDocuments",
+                              "serviceProviderId": "/serviceProviders/azureaisearch"
+                          }
+                      }
+                  }
+              },
+              "runAfter": {
+                  "Select": [
+                      "SUCCEEDED"
+                  ]
+              }
+          }
+      },
+      "contentVersion": "1.0.0.0",
+      "outputs": {},
+      "triggers": {
+          "When_a_file_is_created_or_modified_(properties_only)": {
+              "type": "ApiConnection",
+              "inputs": {
+                  "host": {
+                      "connection": {
+                          "referenceName": "sharepointonline"
+                      }
+                  },
+                  "method": "get",
+                  "path": "/datasets/@{encodeURIComponent(encodeURIComponent('https://163gc.sharepoint.com/sites/DigitalTransformationProcessImprovement'))}/tables/@{encodeURIComponent(encodeURIComponent('4d5586d4-d8a7-4acc-b42d-cd27d17f3682'))}/onupdatedfileitems"
+              },
+              "recurrence": {
+                  "interval": 1,
+                  "frequency": "Minute"
+              },
+              "splitOn": "@triggerBody()?['value']"
+          }
+      },
+      "staticResults": {
+          "Select0": {
+              "status": "Succeeded",
+              "outputs": {
+                  "body": [
+                      "documentName"
+                  ]
+              }
+          }
+      }
+  },
+  "kind": "Stateful"
+}
