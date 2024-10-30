@@ -1,0 +1,18 @@
+{
+  "azureFunctions.deploySubpath": "sharepoint_indexer",
+  "azureFunctions.scmDoBuildDuringDeployment": true,
+  "azureFunctions.pythonVenv": "../.venv",
+  "azureFunctions.projectLanguage": "Python",
+  "azureFunctions.projectRuntime": "~4",
+  "azureFunctions.projectLanguageModel": 2,
+  "editor.rulers": [
+      /*80,*/120
+  ],
+  "pylint.args": [
+      "--rcfile=.vscode/pylintrc"
+  ],
+  "pylint.enabled": true,
+  "editor.tabSize": 4,
+  "editor.insertSpaces": true,
+  "editor.detectIndentation": false
+}
