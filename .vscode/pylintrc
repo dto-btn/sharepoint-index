@@ -2,4 +2,4 @@
 disable=C0114
 
 [FORMAT]
-max-line-length=100
+max-line-length=120

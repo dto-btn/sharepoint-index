@@ -1,11 +1,13 @@
 import asyncio
-import os
-from msgraph import GraphServiceClient
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-import requests
 import logging
+import os
 
-logging.
+import requests
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from msgraph import GraphServiceClient
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 #_scopes = ["https://graph.microsoft.com/Sites.Read.All/.default"]
 _scopes = ["https://graph.microsoft.com/.default"]
