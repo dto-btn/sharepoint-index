@@ -3,11 +3,14 @@ import os
 from msgraph import GraphServiceClient
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 import requests
+import logging
+
+logging.
 
 #_scopes = ["https://graph.microsoft.com/Sites.Read.All/.default"]
 _scopes = ["https://graph.microsoft.com/.default"]
 _credential = DefaultAzureCredential()
-_bearer_token_provider = get_bearer_token_provider(_credential, 
+_bearer_token_provider = get_bearer_token_provider(_credential,
                                                    "https://graph.microsoft.com/.default")
 _graph_client = GraphServiceClient(DefaultAzureCredential(), _scopes)
 _domain = os.getenv("SHAREPOINT_DOMAIN", "163gc.sharepoint.com")
@@ -26,6 +29,7 @@ async def get_site_page(site):
     return result
 
 async def get_site_drive(site, drive_name):
+    """Method used to pass a site and a drive name in order to return the Drive instance"""
     _id = site.id.split(',')[1]
     print(f"The id used to retreive pages: {_id}")
     # get drives https://graph.microsoft.com/v1.0/sites/{siteid}/drives
@@ -37,11 +41,16 @@ async def get_site_drive(site, drive_name):
     return None
 
 async def main():
+    """TODO: Convert this to an Azure Function entry point"""
     response = await get_site_info("DigitalTransformationProcessImprovement")
     drive = await get_site_drive(response, "Documents")
     get_files_id(drive.id)
 
 def get_files_id(drive_id: str):
+    """
+    Get files id for each of the item within the drive passed in parameter.
+    Will also download the files directly to FS
+    """
     headers = {
             'Accept': 'application/json'
     }
@@ -57,6 +66,7 @@ def get_files_id(drive_id: str):
             download_file(file['@microsoft.graph.downloadUrl'], file['name'])
 
 def download_file(url, name):
+    """Download file to filesystem"""
     with requests.get(url, stream=True, timeout=10) as r:
         r.raise_for_status()
         with open('./temp_download/' + name, 'wb') as f:
