@@ -2,6 +2,7 @@
     "recommendations": [
         "ms-python.python", // Microsoft Python extension for VS Code
         "ms-python.vscode-pylance", // Pylance extension for better Python support
-        "ms-python.pylint" // Pylint extension
+        "ms-python.pylint", // Pylint extension
+        "ms-azuretools.vscode-azurefunctions"
     ]
 }

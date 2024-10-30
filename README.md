@@ -20,3 +20,27 @@ az login --scope https://graph.microsoft.com/Sites.Read.All/.default
 # or 
 az login --scope https://graph.microsoft.com/.default
 ```
+
+### Running the Az Function
+
+Ensure you have a `local.settings.json` file present inside the SharepointIndexer folder that contains:
+
+```json
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AzureWebJobsFeatureFlags": "EnableWorkerIndexing",
+    "AzureWebJobsStorage": ""
+  }
+}
+```
+
+## How-to
+
+This Azure Function was init via the Azure Core Tools: 
+
+```bash
+func init SharepointIndexer --worker-runtime python --model V2
+func new --template "Http Trigger" --name IndexSharepointSiteFiles
+```

@@ -2,7 +2,9 @@
   "editor.rulers": [
         /*80,*/120
   ],
-  "pylint.args": ["--disable=C0114", "--max-line-length=120"],
+  "python.linting.pylintArgs": [
+        "--rcfile=.vscode/pylintrc"
+  ],
   "pylint.enabled": true,
   "editor.tabSize": 4,
   "editor.insertSpaces": true,
