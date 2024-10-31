@@ -9,24 +9,24 @@
       "isBackground": true,
       "dependsOn": "pip install (functions)",
       "options": {
-        "cwd": "${workspaceFolder}/sharepoint_indexer"
+        "cwd": "${workspaceFolder}"
       }
     },
     {
       "label": "pip install (functions)",
       "type": "shell",
       "osx": {
-        "command": "${config:azureFunctions.pythonVenv}/bin/python -m pip install -r ../requirements.txt"
+        "command": "${config:azureFunctions.pythonVenv}/bin/python -m pip install -r requirements.txt"
       },
       "windows": {
-        "command": "${config:azureFunctions.pythonVenv}\\Scripts\\python -m pip install -r ../requirements.txt"
+        "command": "${config:azureFunctions.pythonVenv}\\Scripts\\python -m pip install -r requirements.txt"
       },
       "linux": {
-        "command": "${config:azureFunctions.pythonVenv}/bin/python -m pip install -r ../requirements.txt"
+        "command": "${config:azureFunctions.pythonVenv}/bin/python -m pip install -r requirements.txt"
       },
       "problemMatcher": [],
       "options": {
-        "cwd": "${workspaceFolder}/sharepoint_indexer"
+        "cwd": "${workspaceFolder}"
       }
     }
   ]

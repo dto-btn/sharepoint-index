@@ -39,3 +39,5 @@ terraform.rc
 **/.venv_func/*
 
 certificates/
+
+local.settings.json

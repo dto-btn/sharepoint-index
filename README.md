@@ -14,6 +14,7 @@ Create your python env:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
+```
 
 ### Az CLI
 
@@ -37,7 +38,7 @@ Ensure you have a `local.settings.json` file present inside the `sharepoint_inde
   "Values": {
     "FUNCTIONS_WORKER_RUNTIME": "python",
     "AzureWebJobsFeatureFlags": "EnableWorkerIndexing",
-    "AzureWebJobsStorage": ""
+    "AzureWebJobsStorage": "<connection-string>"
   }
 }
 ```
@@ -50,3 +51,8 @@ This Azure Function was init via the Azure Core Tools:
 func init sharepoint_indexer --worker-runtime python --model V2
 func new --template "Http Trigger" --name index_sharepoint_site_files
 ```
+
+## Documentation
+
+* Azure function `host.json` [documentation](https://learn.microsoft.com/en-us/azure/azure-functions/functions-host-json)
+  * `local.settings.json` [documentation](https://learn.microsoft.com/en-us/azure/azure-functions/functions-develop-local#local-settings-file)

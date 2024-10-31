@@ -18,3 +18,13 @@ variable "name_prefix_lowercase" {
     type = string
     default = "scsccioect"
 }
+
+variable "openai_rg" {
+    type = string
+    default = "ScSc-CIO-ECT-OpenAI-rg"
+}
+
+variable "openai_name" {
+    type = string
+    default = "ScSc-CIO-ECT-OpenAI-oai"
+}

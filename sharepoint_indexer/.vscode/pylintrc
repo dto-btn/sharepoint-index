@@ -1,5 +1,0 @@
-[MESSAGES CONTROL]
-disable=C0114
-
-[FORMAT]
-max-line-length=120
