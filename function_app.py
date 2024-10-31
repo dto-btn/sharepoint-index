@@ -13,7 +13,7 @@ from msgraph import GraphServiceClient
 app = df.DFApp(http_auth_level=func.AuthLevel.FUNCTION)
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 #_scopes = ["https://graph.microsoft.com/Sites.Read.All/.default"]
 _scopes = ["https://graph.microsoft.com/.default"]
@@ -21,25 +21,7 @@ _credential = DefaultAzureCredential()
 _bearer_token_provider = get_bearer_token_provider(_credential,
                                                    "https://graph.microsoft.com/.default")
 _graph_client = GraphServiceClient(DefaultAzureCredential(), _scopes)
-
 _domain = os.getenv("SHAREPOINT_DOMAIN", "163gc.sharepoint.com")
-
-# Durable function that fetches all sscplus page IDs/pages and uploads them
-# @app.route(route="orchestrators/{functionName}")
-# @app.durable_client_input(client_name="client")
-# async def http_start(req: func.HttpRequest, client):
-#     function_name = req.route_params.get('functionName')
-#     instance_id = await client.start_new(function_name)
-#     response = client.create_check_status_response(req, instance_id)
-#     return response
-
-# # timer triggered function to fetch index data, runs Sat at midnight
-# # cron with 6 args, the first one being seconds.
-# @app.schedule(schedule="0 0 4 * * Fri", arg_name="myTimer", run_on_startup=False, use_monitor=False)
-# @app.durable_client_input(client_name="client")
-# async def fetch_index_timer_trigger(myTimer: func.TimerRequest, client) -> None:
-#     instance_id = await client.start_new("fetch_index_data")
-#     logging.info("fetch index timer trigger function executed")
 
 @app.route(route="index_sharepoint_site_files", auth_level=func.AuthLevel.FUNCTION)
 @app.durable_client_input(client_name="client")
@@ -81,13 +63,18 @@ def start(context: DurableOrchestrationContext):
     input_data = context.get_input()
     drive_name = input_data["drive_name"]
     site_name = input_data["site_name"]
-    logging.info('Inside Start function of durable method for site -> %s and drive name -> %s', site_name, drive_name)
+    logger.info('Inside Start function of durable method for site -> %s and drive name -> %s', site_name, drive_name)
     site_id = yield context.call_activity("get_site_info", site_name)
+    logger.info("Got the site id -> %s", site_id)
+    
     inputs = {
         "site_id": site_id,
         "drive_name": drive_name
     }
-    drive_info = yield context.call_activity("get_site_drive", inputs)
+    result = yield context.call_activity("get_site_root_drive", inputs)
+    if result: #Not None, unpack.
+        drive_id, folders = result
+        files = yield context.call_activity("get_files", {"drive_id": drive_id, "folders": folders})
 
     return [site_name, drive_name, site_id]
 
@@ -98,25 +85,37 @@ async def get_site_info(sitename: str):
         ATM we only return the site.id, that's all we need going on forward.
     """
     url = f'{_domain}/:/sites/{sitename}'
-    logger.debug("Going to use this url to fetch site id and metadata: %s", url)
+    logger.info("Going to use this url to fetch site id and metadata: %s", url)
     result = await _graph_client.sites.by_site_id(url).get()
-    logger.debug(result)
     return result.id
 
 @app.activity_trigger(input_name="inputs")
-async def get_site_drive(inputs):
+async def get_site_root_drive(inputs):
     """Method used to pass a site and a drive name in order to return the Drive instance"""
     _id = inputs['site_id'].split(',')[1]
-    logger.debug("The id used to retreive pages: %s", _id)
+    logger.info("The id used to retreive pages: %s", _id)
     # get drives https://graph.microsoft.com/v1.0/sites/{siteid}/drives
-    result = await _graph_client.sites.by_site_id(_id).drives.get()
-    filtered_drives = [drive for drive in result.value if drive.odata_type== "#microsoft.graph.drive"]
+    drives = await _graph_client.sites.by_site_id(_id).drives.get()
+    filtered_drives = [drive for drive in drives.value if drive.odata_type== "#microsoft.graph.drive"]
+
+    # Here we might receive something like Documents/SubfolderA/Some Other Folder/
+    # And we simply want to retreive the drive id for the root folder.
+    path_structure = inputs['drive_name'].strip('/').split('/')
     for drive in filtered_drives:
-        logger.debug(drive)
-        if drive.name == inputs['drive_name']:
-            logging.debug("Found the drive.")
-            return drive
+        logger.info(drive.name)
+        if drive.name == path_structure[0]:
+            logger.info("Found the root drive -> %s.", drive.name)
+            # return an empty array if the folder path was a single folder, else return the remainder of the path.
+            return [drive.id, path_structure[1:] if len(path_structure) > 1 else [] ]
     return None
+
+@app.activity_trigger(input_name="inputs")
+async def get_files(inputs):
+    """Should drill down folder to folder until the folders array passed is empty."""
+    drive_id = inputs['drive_id']
+    folders = inputs['folders']
+    logger.info("Getting files and/or folders. Drive -> %s (folders: %s)", drive_id, folders)
+    return "Success"
 
 # async def _get_site_page(site):
 #     """TODO: Test this method to see what it yields."""
