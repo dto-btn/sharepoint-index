@@ -51,8 +51,7 @@ async def index_sharepoint_site_files(req: func.HttpRequest, client: DurableOrch
         }
         instance_id = await client.start_new("start", None, client_input=input_data)
         return client.create_check_status_response(req, instance_id)
-    else:
-        return func.HttpResponse(body="Unable to start durable function due to missing parameters", status_code=400)
+    return func.HttpResponse(body="Unable to start durable function due to missing parameters", status_code=400)
 
 @app.orchestration_trigger(context_name="context")
 def start(context: DurableOrchestrationContext):
@@ -119,8 +118,7 @@ async def get_site_drive_url(inputs):
     if len(drives_info) > 1:
         return get_drives_info(f"https://graph.microsoft.com/v1.0/drives/{drives_info[0]['drive_id']}/root/children",
                                drives_info[1:])
-    else:
-        return f"https://graph.microsoft.com/v1.0/drives/{drives_info[0]['drive_id']}/root/children"
+    return f"https://graph.microsoft.com/v1.0/drives/{drives_info[0]['drive_id']}/root/children"
 
 @app.activity_trigger(input_name="url")
 async def get_files(url):
