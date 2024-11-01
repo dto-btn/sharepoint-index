@@ -1,21 +1,20 @@
-import json
 import logging
 import os
+import re
 
-import azure.functions as func
 import azure.durable_functions as df
+import azure.functions as func
 import requests
+from azure.durable_functions import (DurableOrchestrationClient,
+                                     DurableOrchestrationContext)
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from msgraph import GraphServiceClient
 
-#app = func.FunctionApp()
 app = df.DFApp(http_auth_level=func.AuthLevel.FUNCTION)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-#_scopes = ["https://graph.microsoft.com/Sites.Read.All/.default"]
 _scopes = ["https://graph.microsoft.com/.default"]
 _credential = DefaultAzureCredential()
 _bearer_token_provider = get_bearer_token_provider(_credential,
@@ -60,23 +59,23 @@ def start(context: DurableOrchestrationContext):
     """
     Initiate the whole process of loading up a site, fetching site items id and then indexing each one of them.
     """
+    files = []
     input_data = context.get_input()
     drive_name = input_data["drive_name"]
     site_name = input_data["site_name"]
     logger.info('Inside Start function of durable method for site -> %s and drive name -> %s', site_name, drive_name)
     site_id = yield context.call_activity("get_site_info", site_name)
     logger.info("Got the site id -> %s", site_id)
-    
+
     inputs = {
         "site_id": site_id,
         "drive_name": drive_name
     }
-    result = yield context.call_activity("get_site_root_drive", inputs)
-    if result: #Not None, unpack.
-        drive_id, folders = result
-        files = yield context.call_activity("get_files", {"drive_id": drive_id, "folders": folders})
+    url = yield context.call_activity("get_site_drive_url", inputs)
+    if url:
+        files = yield context.call_activity("get_files", url)
 
-    return [site_name, drive_name, site_id]
+    return files
 
 @app.activity_trigger(input_name="sitename") # cannot use underscore for bindings, silly regex they have wont allow it
 async def get_site_info(sitename: str):
@@ -90,8 +89,11 @@ async def get_site_info(sitename: str):
     return result.id
 
 @app.activity_trigger(input_name="inputs")
-async def get_site_root_drive(inputs):
-    """Method used to pass a site and a drive name in order to return the Drive instance"""
+async def get_site_drive_url(inputs):
+    """Method used to pass a site and a drive name in order to return the drive id
+
+    Return url to be called for graph API to get the files
+    """
     _id = inputs['site_id'].split(',')[1]
     logger.info("The id used to retreive pages: %s", _id)
     # get drives https://graph.microsoft.com/v1.0/sites/{siteid}/drives
@@ -101,46 +103,72 @@ async def get_site_root_drive(inputs):
     # Here we might receive something like Documents/SubfolderA/Some Other Folder/
     # And we simply want to retreive the drive id for the root folder.
     path_structure = inputs['drive_name'].strip('/').split('/')
+
     for drive in filtered_drives:
-        logger.info(drive.name)
         if drive.name == path_structure[0]:
             logger.info("Found the root drive -> %s.", drive.name)
+            # return the list of drives
+            drives_info = [{"drive_name": drive.name, "drive_id": drive.id }]
             # return an empty array if the folder path was a single folder, else return the remainder of the path.
-            return [drive.id, path_structure[1:] if len(path_structure) > 1 else [] ]
-    return None
+            remaining_folders = path_structure[1:] if len(path_structure) > 1 else []
+            drives_info.extend({"drive_name": folder, "drive_id": ""} for folder in remaining_folders)
+            logger.info("This is the length of the drives return statement: %s", len(drives_info))
 
-@app.activity_trigger(input_name="inputs")
-async def get_files(inputs):
-    """Should drill down folder to folder until the folders array passed is empty."""
-    drive_id = inputs['drive_id']
-    folders = inputs['folders']
-    logger.info("Getting files and/or folders. Drive -> %s (folders: %s)", drive_id, folders)
-    return "Success"
+    # if we got more than 1 drive we need to drill down the rest of the drives without the
+    # graph API Since it doesn't do that sort of recursion.
+    if len(drives_info) > 1:
+        return get_drives_info(f"https://graph.microsoft.com/v1.0/drives/{drives_info[0]['drive_id']}/root/children",
+                               drives_info[1:])
+    else:
+        return f"https://graph.microsoft.com/v1.0/drives/{drives_info[0]['drive_id']}/root/children"
 
-# async def _get_site_page(site):
-#     """TODO: Test this method to see what it yields."""
-#     _id = site.id.split(',')[1]
-#     logger.debug("The id used to retreive pages: %s", _id)
-#     result = await _graph_client.sites.by_site_id(_id).pages.get()
-#     return result
+@app.activity_trigger(input_name="url")
+async def get_files(url):
+    """Should drill down folder to folder until the folders array passed is empty.
+    Return array of @microsoft.graph.downloadUrl attribute for each files
+    """
+    logger.info("Getting files and/or folders. Drive -> %s", url)
+    result = call_graph_api(url, attribute_filter="@microsoft.graph.downloadUrl")
+    return [file['@microsoft.graph.downloadUrl'] for file in result]
 
-# def _get_files_id(drive_id: str):
-#     """
-#     Get files id for each of the item within the drive passed in parameter.
-#     Will also download the files directly to FS
-#     """
-#     headers = {
-#         'Accept': 'application/json'
-#         "Bearer " + _bearer_token_provider()
-#     }
-#     # Can also use odata filter -> ?$select=id,name,@microsoft.graph.downloadUrl"
-#     url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root/children"
-#     logger.debug("Trying to get drive items from --> %s", url)
-#     r = requests.get(url, headers=headers, timeout=10)
-#     files = r.json()['value']
-#     for file in files:
-#         if '@microsoft.graph.downloadUrl' in file:
-#             _download_file(file['@microsoft.graph.downloadUrl'], file['name'])
+def call_graph_api(url: str, **kwargs):
+    """
+    Calls the graph API. Would use the client but it doesn't support our use case for drilling down folders *yet*
+    """
+    odata_filter = kwargs.get('odata_filter', None)
+    attribute_filter = kwargs.get('attribute_filter', None)
+    headers = {
+        'Accept': '*/*',
+        "Authorization": f"Bearer {_bearer_token_provider()}"
+    }
+    r = requests.get(url, headers=headers, timeout=10)
+    r.raise_for_status()
+    result = r.json()['value']
+    if odata_filter:
+        result = [item for item in result if item['odata_type'] == odata_filter]
+    if attribute_filter:
+        result = [item for item in result if attribute_filter in item]
+    return result
+
+def get_drives_info(url: str, drives_info):
+    """
+    Recursive function that will populate the missing drives_id from the list
+
+    Return [{"drive_name": $drive_name, "drive_id": $drive_id}, {...}]
+    """
+    # this is the base url, we will extend it with /items/{folder_id}/children (removing /root)
+    # for each items in the list
+    result = call_graph_api(url, attribute_filter="folder")#, odata_filter="#microsoft.graph.drive")
+    new_url = url.rstrip("/root/children") # remove the root/children if present
+    pattern = r'(/items).*'
+    new_url = re.sub(pattern, r'\1', new_url).rstrip("/items")
+    for folder in result:
+        if folder['name'] == drives_info[0]["drive_name"]:
+            new_url = new_url + f"/items/{folder['id']}/children"
+    logger.info("---> New url ---> %s", new_url)
+    if len(drives_info) > 1:
+        return get_drives_info(new_url, drives_info[1:])
+    return new_url
 
 # def _download_file(url, name):
 #     """Download file to filesystem"""
