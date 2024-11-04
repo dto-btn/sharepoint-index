@@ -6,6 +6,12 @@ resource "azurerm_resource_group" "main" {
   location = var.default_location
 }
 
+resource "azurerm_user_assigned_identity" "main" {
+  name                = "ssc-assistant-sharepoint-indexer"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+}
+
 resource "azurerm_storage_account" "main" {
   name                     = "${replace(var.project_name, "_", "")}sto"
   resource_group_name      = azurerm_resource_group.main.name
@@ -64,14 +70,16 @@ resource "azurerm_linux_function_app" "functions" {
     "AZURE_SEARCH_ADMIN_KEY"         = data.azurerm_search_service.main.primary_key
     "AZURE_OPENAI_ENDPOINT"          = data.azurerm_cognitive_account.ai.endpoint
     "AZURE_OPENAI_API_KEY"           = data.azurerm_cognitive_account.ai.primary_access_key
+    "AZURE_CLIENT_ID"                = azurerm_user_assigned_identity.main.client_id
   }
 
   identity {
-    type = "SystemAssigned"
+    type = "UserAssigned"
+    identity_ids = [ azurerm_user_assigned_identity.main.id ]
   }
 
   sticky_settings { # settings that are the same regardless of deployment slot..
-    app_setting_names = [ "AZURE_SEARCH_SERVICE_ENDPOINT", "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KEY", "AZURE_SEARCH_ADMIN_KEY", "BLOB_CONNECTION_STRING", "BLOB_CONTAINER_NAME" ]
+    app_setting_names = [ "AZURE_SEARCH_SERVICE_ENDPOINT", "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KEY", "AZURE_SEARCH_ADMIN_KEY", "BLOB_CONNECTION_STRING", "BLOB_CONTAINER_NAME", "AZURE_CLIENT_ID" ]
   }
 
   #virtual_network_subnet_id = data.azurerm_subnet.subscription-vnet-sub.id

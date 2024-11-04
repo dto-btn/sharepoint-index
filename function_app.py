@@ -7,7 +7,7 @@ import azure.functions as func
 import requests
 from azure.durable_functions import (DurableOrchestrationClient,
                                      DurableOrchestrationContext)
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from azure.identity import DefaultAzureCredential, ManagedIdentityCredential, get_bearer_token_provider
 from msgraph import GraphServiceClient
 
 app = df.DFApp(http_auth_level=func.AuthLevel.FUNCTION)
@@ -16,10 +16,17 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 _scopes = ["https://graph.microsoft.com/.default"]
-_credential = DefaultAzureCredential()
+# Determine the appropriate credential to use
+azure_client_id = os.getenv("AZURE_CLIENT_ID")
+if azure_client_id:
+    _credential = ManagedIdentityCredential(client_id=azure_client_id)
+    logger.info("Loading up ManagedIdentityCredential")
+else:
+    _credential = DefaultAzureCredential()
+    logger.info("Loading up DefaultAzureCredential")
 _bearer_token_provider = get_bearer_token_provider(_credential,
                                                    "https://graph.microsoft.com/.default")
-_graph_client = GraphServiceClient(DefaultAzureCredential(), _scopes)
+_graph_client = GraphServiceClient(_credential, _scopes)
 _domain = os.getenv("SHAREPOINT_DOMAIN", "163gc.sharepoint.com")
 
 @app.route(route="index_sharepoint_site_files", auth_level=func.AuthLevel.FUNCTION)
