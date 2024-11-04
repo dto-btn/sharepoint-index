@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import tempfile
 
 import azure.durable_functions as df
 import azure.functions as func
@@ -14,6 +15,8 @@ app = df.DFApp(http_auth_level=func.AuthLevel.FUNCTION)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
+_dl_directory = "sharepoint_indexer"
 
 _scopes = ["https://graph.microsoft.com/.default"]
 # Determine the appropriate credential to use
@@ -80,6 +83,9 @@ def start(context: DurableOrchestrationContext):
     url = yield context.call_activity("get_site_drive_url", inputs)
     if url:
         files = yield context.call_activity("get_files", url)
+        logger.info(files)
+        for file in files:
+            download_file(file['url'], file['name'])
 
     return files
 
@@ -134,7 +140,12 @@ async def get_files(url):
     """
     logger.info("Getting files and/or folders. Drive -> %s", url)
     result = call_graph_api(url, attribute_filter="@microsoft.graph.downloadUrl")
-    return [file['@microsoft.graph.downloadUrl'] for file in result]
+    return [{
+                'url': file['@microsoft.graph.downloadUrl'],
+                'name': file['name'],
+                'webUrl': file['webUrl'],
+                'id': file['id']
+            } for file in result]
 
 def call_graph_api(url: str, **kwargs):
     """
@@ -175,10 +186,11 @@ def get_drives_info(url: str, drives_info):
         return get_drives_info(new_url, drives_info[1:])
     return new_url
 
-# def _download_file(url, name):
-#     """Download file to filesystem"""
-#     with requests.get(url, stream=True, timeout=10) as r:
-#         r.raise_for_status()
-#         with open('./temp_download/' + name, 'wb') as f:
-#             for chunk in r.iter_content(chunk_size=8192):
-#                 f.write(chunk)
+def download_file(url, name):
+    """Download file to filesystem"""
+    tmp = tempfile.gettempdir()
+    with requests.get(url, stream=True, timeout=10) as r:
+        r.raise_for_status()
+        with open(os.path.join(tmp, _dl_directory, name), 'wb') as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
