@@ -1,26 +1,32 @@
 import logging
 import os
-import re
 import tempfile
+import uuid
+from http.client import HTTPException
 
 import azure.durable_functions as df
 import azure.functions as func
 import requests
 from azure.durable_functions import (DurableOrchestrationClient,
                                      DurableOrchestrationContext)
-from azure.identity import DefaultAzureCredential, ManagedIdentityCredential, get_bearer_token_provider
+from azure.identity import (DefaultAzureCredential, ManagedIdentityCredential,
+                            get_bearer_token_provider)
+from llama_index.core import SimpleDirectoryReader
 from msgraph import GraphServiceClient
+
+from util import utils
 
 app = df.DFApp(http_auth_level=func.AuthLevel.FUNCTION)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-_dl_directory = "sharepoint_indexer"
+_DL_DIRECTORY = "sharepoint_indexer"
 
 _scopes = ["https://graph.microsoft.com/.default"]
 # Determine the appropriate credential to use
-azure_client_id = os.getenv("AZURE_CLIENT_ID")
+azure_client_id: str    = os.getenv("AZURE_CLIENT_ID")
+
 if azure_client_id:
     _credential = ManagedIdentityCredential(client_id=azure_client_id)
     logger.info("Loading up ManagedIdentityCredential")
@@ -57,9 +63,11 @@ async def index_sharepoint_site_files(req: func.HttpRequest, client: DurableOrch
     if site_name and drive_name:
         input_data = {
             "site_name": site_name,
-            "drive_name": drive_name
+            "drive_name": drive_name,
+            "run_id": str(uuid.uuid4())
         }
         instance_id = await client.start_new("start", None, client_input=input_data)
+        logger.info("Started orchestration with ID = %s", instance_id)
         return client.create_check_status_response(req, instance_id)
     return func.HttpResponse(body="Unable to start durable function due to missing parameters", status_code=400)
 
@@ -72,8 +80,12 @@ def start(context: DurableOrchestrationContext):
     input_data = context.get_input()
     drive_name = input_data["drive_name"]
     site_name = input_data["site_name"]
-    logger.info('Inside Start function of durable method for site -> %s and drive name -> %s', site_name, drive_name)
-    site_id = yield context.call_activity("get_site_info", site_name)
+    run_id = input_data["run_id"]
+    logger.info('Inside Start function of durable method for site -> %s and drive name -> %s (runId: %s)',
+                site_name,
+                drive_name,
+                run_id)
+    site_id = yield context.call_activity("get_sharepoint_site_info", site_name)
     logger.info("Got the site id -> %s", site_id)
 
     inputs = {
@@ -83,14 +95,18 @@ def start(context: DurableOrchestrationContext):
     url = yield context.call_activity("get_site_drive_url", inputs)
     if url:
         files = yield context.call_activity("get_files", url)
-        logger.info(files)
+        logger.info("Got the files from the requested drive, files contained --> %s", len(files))
         for file in files:
-            download_file(file['url'], file['name'])
+            downloaded = yield context.call_activity("download_file", {'file':file, 'run_id': run_id})
+            logger.info("File downloaded successfully? -> %s", downloaded)
+            file['downloaded'] = downloaded
+        # Index files downloaded.
+        result = yield context.call_activity("index_file", {'files':files, 'run_id': run_id, 'site_name': site_name})
 
     return files
 
 @app.activity_trigger(input_name="sitename") # cannot use underscore for bindings, silly regex they have wont allow it
-async def get_site_info(sitename: str):
+async def get_sharepoint_site_info(sitename: str):
     """
     Get Sharepoint site info based on the name.
         ATM we only return the site.id, that's all we need going on forward.
@@ -129,68 +145,88 @@ async def get_site_drive_url(inputs):
     # if we got more than 1 drive we need to drill down the rest of the drives without the
     # graph API Since it doesn't do that sort of recursion.
     if len(drives_info) > 1:
-        return get_drives_info(f"https://graph.microsoft.com/v1.0/drives/{drives_info[0]['drive_id']}/root/children",
-                               drives_info[1:])
+        return utils.get_drives_info(
+            f"https://graph.microsoft.com/v1.0/drives/{drives_info[0]['drive_id']}/root/children",
+            _bearer_token_provider(),
+            drives_info[1:])
     return f"https://graph.microsoft.com/v1.0/drives/{drives_info[0]['drive_id']}/root/children"
 
 @app.activity_trigger(input_name="url")
 async def get_files(url):
     """Should drill down folder to folder until the folders array passed is empty.
-    Return array of @microsoft.graph.downloadUrl attribute for each files
+
+    Returns
+    ----------- 
+    Dict array {
+                'url': '@microsoft.graph.downloadUrl',
+                'name': 'name',
+                'webUrl': 'webUrl',
+                'id': 'id',
+                'lastModifiedDateTime': 'lastModifiedDateTime'
+            } for each files
     """
     logger.info("Getting files and/or folders. Drive -> %s", url)
-    result = call_graph_api(url, attribute_filter="@microsoft.graph.downloadUrl")
+    result = utils.call_graph_api(url, _bearer_token_provider(), attribute_filter="@microsoft.graph.downloadUrl")
     return [{
                 'url': file['@microsoft.graph.downloadUrl'],
                 'name': file['name'],
                 'webUrl': file['webUrl'],
-                'id': file['id']
+                'id': file['id'],
+                'lastModifiedDateTime': file['lastModifiedDateTime']
             } for file in result]
 
-def call_graph_api(url: str, **kwargs):
-    """
-    Calls the graph API. Would use the client but it doesn't support our use case for drilling down folders *yet*
-    """
-    odata_filter = kwargs.get('odata_filter', None)
-    attribute_filter = kwargs.get('attribute_filter', None)
-    headers = {
-        'Accept': '*/*',
-        "Authorization": f"Bearer {_bearer_token_provider()}"
-    }
-    r = requests.get(url, headers=headers, timeout=10)
-    r.raise_for_status()
-    result = r.json()['value']
-    if odata_filter:
-        result = [item for item in result if item['odata_type'] == odata_filter]
-    if attribute_filter:
-        result = [item for item in result if attribute_filter in item]
-    return result
-
-def get_drives_info(url: str, drives_info):
-    """
-    Recursive function that will populate the missing drives_id from the list
-
-    Return [{"drive_name": $drive_name, "drive_id": $drive_id}, {...}]
-    """
-    # this is the base url, we will extend it with /items/{folder_id}/children (removing /root)
-    # for each items in the list
-    result = call_graph_api(url, attribute_filter="folder")#, odata_filter="#microsoft.graph.drive")
-    new_url = url.rstrip("/root/children") # remove the root/children if present
-    pattern = r'(/items).*'
-    new_url = re.sub(pattern, r'\1', new_url).rstrip("/items")
-    for folder in result:
-        if folder['name'] == drives_info[0]["drive_name"]:
-            new_url = new_url + f"/items/{folder['id']}/children"
-    logger.info("---> New url ---> %s", new_url)
-    if len(drives_info) > 1:
-        return get_drives_info(new_url, drives_info[1:])
-    return new_url
-
-def download_file(url, name):
+@app.activity_trigger(input_name="inputs")
+def download_file(inputs):
     """Download file to filesystem"""
-    tmp = tempfile.gettempdir()
-    with requests.get(url, stream=True, timeout=10) as r:
-        r.raise_for_status()
-        with open(os.path.join(tmp, _dl_directory, name), 'wb') as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
+    url = inputs['file']['url']
+    name = inputs['file']['name']
+
+    run_id = inputs['run_id']
+
+    path = os.path.join(tempfile.gettempdir(), _DL_DIRECTORY, run_id)
+    if not os.path.exists(path):
+        os.makedirs(path)
+    try:
+        with requests.get(url, stream=True, timeout=10) as r:
+            r.raise_for_status()
+            with open(os.path.join(path, name), 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+        return True
+    except HTTPException as e:
+        logger.error("Unable to download file -> %s, %s", name, e)
+        return False
+    except OSError as e:
+        logger.error("Unable to write file -> %s, %s", name, e)
+        return False
+
+
+@app.activity_trigger(input_name="inputs")
+def index_file(inputs):
+    """Loads all file from a specific folder and index them in a Azure Search Service"""
+    logger.info('Indexing file!')
+    files = inputs['files']
+    run_id = inputs['run_id']
+    site_name = inputs['site_name']
+    path = os.path.join(tempfile.gettempdir(), _DL_DIRECTORY, run_id)
+
+    documents = SimpleDirectoryReader(path).load_data()
+    logger.info("Loaded document from SimpleDirectoryReader, %s document(s) loaded", len(documents))
+
+    metadata_fields = {
+        'url': '@microsoft.graph.downloadUrl',
+        'name': 'name',
+        'webUrl': 'webUrl',
+        'id': 'id',
+        'lastModifiedDateTime': 'lastModifiedDateTime'
+    }
+
+    # populate metadata
+    for document in documents:
+        # match a file (from input) and populate the metadata
+        pass
+
+    # create the index if it doesn't exists, otherwise just populate it for now.
+    # overwrite documents if metadata date is newer.
+    vector_store = utils.get_vector_store(site_name, metadata_fields, _credential)
+
