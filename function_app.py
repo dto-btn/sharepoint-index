@@ -210,23 +210,15 @@ def index_file(inputs):
     site_name = inputs['site_name']
     path = os.path.join(tempfile.gettempdir(), _DL_DIRECTORY, run_id)
 
-    documents = SimpleDirectoryReader(path).load_data()
+    documents = SimpleDirectoryReader(path, file_metadata=utils.file_metadata).load_data()
     logger.info("Loaded document from SimpleDirectoryReader, %s document(s) loaded", len(documents))
-
-    metadata_fields = {
-        'url': '@microsoft.graph.downloadUrl',
-        'name': 'name',
-        'webUrl': 'webUrl',
-        'id': 'id',
-        'lastModifiedDateTime': 'lastModifiedDateTime'
-    }
 
     # populate metadata
     for document in documents:
         # match a file (from input) and populate the metadata
-        pass
+        logger.info("Current document processed: %s", document.metadata['name'])
 
     # create the index if it doesn't exists, otherwise just populate it for now.
     # overwrite documents if metadata date is newer.
-    vector_store = utils.get_vector_store(site_name, metadata_fields, _credential)
+    vector_store = utils.get_vector_store(site_name, _credential)
 

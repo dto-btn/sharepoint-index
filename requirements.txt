@@ -15,3 +15,5 @@ docx2txt
 openpyxl
 llama-index-llms-azure-openai
 llama-index-embeddings-azure-openai
+llama-index-vector-stores-azureaisearch
+python-dotenv
