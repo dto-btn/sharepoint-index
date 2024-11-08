@@ -216,9 +216,12 @@ def index_file(inputs):
     # populate metadata
     for document in documents:
         # match a file (from input) and populate the metadata
-        logger.info("Current document processed: %s", document.metadata['name'])
+        #logger.info("Current document processed: %s", document.metadata['name'])
+        file_metadata = [file for file in files if file['name'] == document.metadata['name']]
+        if file_metadata:
+            document.metadata = file_metadata[0] # there should only be 1 file matching that name.
 
     # create the index if it doesn't exists, otherwise just populate it for now.
     # overwrite documents if metadata date is newer.
-    vector_store = utils.get_vector_store(site_name, _credential)
-
+    index = utils.save_index(site_name, documents)
+    return index.index_id

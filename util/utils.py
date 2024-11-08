@@ -8,20 +8,30 @@ from dotenv import load_dotenv
 from azure.search.documents.indexes import SearchIndexClient
 from llama_index.vector_stores.azureaisearch import AzureAISearchVectorStore
 from llama_index.vector_stores.azureaisearch import IndexManagement
+from llama_index.core import StorageContext, VectorStoreIndex
+from llama_index.core.settings import Settings
+from llama_index.embeddings.azure_openai import AzureOpenAIEmbedding
+from llama_index.llms.azure_openai import AzureOpenAI
+from azure.core.credentials import AzureKeyCredential
 
 load_dotenv()
-#azure_openai_uri: str   = os.getenv("AZURE_OPENAI_ENDPOINT", "UNDEFINED")
-#api_key: str            = os.getenv("AZURE_OPENAI_API_KEY", "UNDEFINED")
-#api_version: str        = os.getenv("AZURE_OPENAI_VERSION", "2024-05-01-preview")
+azure_openai_uri: str   = os.getenv("AZURE_OPENAI_ENDPOINT", "UNDEFINED")
+api_key: str            = os.getenv("AZURE_OPENAI_API_KEY", "UNDEFINED")
+api_version: str        = os.getenv("AZURE_OPENAI_VERSION", "2024-05-01-preview")
 api_search_version: str = os.getenv("AZURE_SEARCH_VERSION", "2024-05-01-preview")
 service_endpoint: str   = os.getenv("AZURE_SEARCH_SERVICE_ENDPOINT", "UNDEFINED")
 #key: str                = os.getenv("AZURE_SEARCH_ADMIN_KEY", "UNDEFINED")
 #alias_index_name: str   = os.getenv("ALIAS_INDEX_NAME", "current")
+search_key: str          = os.getenv("AZURE_SEARCH_ADMIN_KEY", "UNDEFINED")
+search_key_credential = AzureKeyCredential(search_key)
+
+openai_model: str = "gpt-35-turbo"
+embedding_model: str = "text-embedding-ada-002"
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-__all__ = ["call_graph_api", "get_drives_info", "get_vector_store", "file_metadata"]
+__all__ = ["call_graph_api", "get_drives_info", "save_index", "file_metadata"]
 
 _METADATA_FIELDS = {
         'url': '@microsoft.graph.downloadUrl',
@@ -70,14 +80,14 @@ def get_drives_info(url: str, token: str, drives_info):
         return get_drives_info(new_url, token, drives_info[1:])
     return new_url
 
-def get_vector_store(index_name: str, creds):
+def save_index(index_name: str, documents):
     """
     Create or re-use index passed in and returns vector store tied to it.
     """
     logger.info("Using search service endpoint: %s", service_endpoint)
     index_client = SearchIndexClient(
         endpoint=service_endpoint,
-        credential=creds,
+        credential=search_key_credential,
         api_version=api_search_version
     )
 
@@ -97,10 +107,36 @@ def get_vector_store(index_name: str, creds):
         # compression_type="binary" # Option to use "scalar" or "binary". NOTE: compression is only supported for HNSW
     )
 
-    return vector_store
+    storage_context = StorageContext.from_defaults(vector_store=vector_store)
+
+    llm = AzureOpenAI(
+        model=openai_model,
+        deployment_name=openai_model,
+        api_version=api_version,
+        azure_endpoint=azure_openai_uri,
+        api_key=api_key
+    )
+
+    embed_model = AzureOpenAIEmbedding(
+        model=embedding_model,
+        deployment_name=embedding_model,
+        api_key=api_key,
+        azure_endpoint=str(azure_openai_uri),
+        api_version=api_version
+    )
+
+    Settings.llm = llm
+    Settings.embed_model = embed_model
+
+    index = VectorStoreIndex.from_documents(
+        documents, storage_context=storage_context
+    )
+
+    return index
 
 def file_metadata(filename: str):
     """pre-populate metadata with filename for later."""
     metadata = _METADATA_FIELDS.copy()
-    metadata['name'] = filename
+    # process the filename to remove the folders (if any)
+    metadata['name'] = os.path.basename(filename)
     return metadata
