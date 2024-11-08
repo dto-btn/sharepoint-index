@@ -100,9 +100,9 @@ def start(context: DurableOrchestrationContext):
             downloaded = yield context.call_activity("download_file", {'file':file, 'run_id': run_id})
             logger.info("File downloaded successfully? -> %s", downloaded)
             file['downloaded'] = downloaded
-        # Index files downloaded.
-        result = yield context.call_activity("index_file", {'files':files, 'run_id': run_id, 'site_name': site_name})
-
+            # Index files downloaded.
+            indexed = yield context.call_activity("index_file", {'file':file, 'run_id': run_id, 'site_name': site_name})
+            file['indexed'] = indexed
     return files
 
 @app.activity_trigger(input_name="sitename") # cannot use underscore for bindings, silly regex they have wont allow it
@@ -205,23 +205,16 @@ def download_file(inputs):
 def index_file(inputs):
     """Loads all file from a specific folder and index them in a Azure Search Service"""
     logger.info('Indexing file!')
-    files = inputs['files']
+    file = inputs['file']
     run_id = inputs['run_id']
     site_name = inputs['site_name']
-    path = os.path.join(tempfile.gettempdir(), _DL_DIRECTORY, run_id)
+    path = os.path.join(tempfile.gettempdir(), _DL_DIRECTORY, run_id, file['name'])
 
-    documents = SimpleDirectoryReader(path, file_metadata=utils.file_metadata).load_data()
-    logger.info("Loaded document from SimpleDirectoryReader, %s document(s) loaded", len(documents))
-
-    # populate metadata
-    for document in documents:
-        # match a file (from input) and populate the metadata
-        #logger.info("Current document processed: %s", document.metadata['name'])
-        file_metadata = [file for file in files if file['name'] == document.metadata['name']]
-        if file_metadata:
-            document.metadata = file_metadata[0] # there should only be 1 file matching that name.
+    # updated the code here to avoid timeout, this activity loads 1 file at the time
+    document = SimpleDirectoryReader(input_files=[path], file_metadata=utils.file_metadata).load_data()
+    document.metadata = file # technically this dict (the file) represents the metadata we need.
 
     # create the index if it doesn't exists, otherwise just populate it for now.
     # overwrite documents if metadata date is newer.
-    index = utils.save_index(site_name, documents)
+    index = utils.save_index(site_name, document)
     return index.index_id

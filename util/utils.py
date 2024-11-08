@@ -15,14 +15,14 @@ from llama_index.llms.azure_openai import AzureOpenAI
 from azure.core.credentials import AzureKeyCredential
 
 load_dotenv()
+
 azure_openai_uri: str   = os.getenv("AZURE_OPENAI_ENDPOINT", "UNDEFINED")
 api_key: str            = os.getenv("AZURE_OPENAI_API_KEY", "UNDEFINED")
 api_version: str        = os.getenv("AZURE_OPENAI_VERSION", "2024-05-01-preview")
-api_search_version: str = os.getenv("AZURE_SEARCH_VERSION", "2024-05-01-preview")
+
 service_endpoint: str   = os.getenv("AZURE_SEARCH_SERVICE_ENDPOINT", "UNDEFINED")
-#key: str                = os.getenv("AZURE_SEARCH_ADMIN_KEY", "UNDEFINED")
-#alias_index_name: str   = os.getenv("ALIAS_INDEX_NAME", "current")
 search_key: str          = os.getenv("AZURE_SEARCH_ADMIN_KEY", "UNDEFINED")
+api_search_version: str = os.getenv("AZURE_SEARCH_VERSION", "2024-05-01-preview")
 search_key_credential = AzureKeyCredential(search_key)
 
 openai_model: str = "gpt-35-turbo"
