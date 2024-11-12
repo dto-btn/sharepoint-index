@@ -1,18 +1,19 @@
 import logging
-import re
 import os
+import re
+from datetime import datetime as dt
 
 import requests
-
-from dotenv import load_dotenv
+from azure.core.credentials import AzureKeyCredential
+from azure.search.documents import SearchClient
 from azure.search.documents.indexes import SearchIndexClient
-from llama_index.vector_stores.azureaisearch import AzureAISearchVectorStore
-from llama_index.vector_stores.azureaisearch import IndexManagement
+from dotenv import load_dotenv
 from llama_index.core import StorageContext, VectorStoreIndex
 from llama_index.core.settings import Settings
 from llama_index.embeddings.azure_openai import AzureOpenAIEmbedding
 from llama_index.llms.azure_openai import AzureOpenAI
-from azure.core.credentials import AzureKeyCredential
+from llama_index.vector_stores.azureaisearch import (AzureAISearchVectorStore,
+                                                     IndexManagement)
 
 load_dotenv()
 
@@ -24,6 +25,12 @@ service_endpoint: str   = os.getenv("AZURE_SEARCH_SERVICE_ENDPOINT", "UNDEFINED"
 search_key: str          = os.getenv("AZURE_SEARCH_ADMIN_KEY", "UNDEFINED")
 api_search_version: str = os.getenv("AZURE_SEARCH_VERSION", "2024-05-01-preview")
 search_key_credential = AzureKeyCredential(search_key)
+
+index_client = SearchIndexClient(
+        endpoint=service_endpoint,
+        credential=search_key_credential,
+        api_version=api_search_version
+    )
 
 openai_model: str = "gpt-35-turbo"
 embedding_model: str = "text-embedding-ada-002"
@@ -85,11 +92,6 @@ def save_index(index_name: str, documents):
     Create or re-use index passed in and returns vector store tied to it.
     """
     logger.info("Using search service endpoint: %s", service_endpoint)
-    index_client = SearchIndexClient(
-        endpoint=service_endpoint,
-        credential=search_key_credential,
-        api_version=api_search_version
-    )
 
     vector_store = AzureAISearchVectorStore(
         search_or_index_client=index_client,
@@ -128,8 +130,15 @@ def save_index(index_name: str, documents):
     Settings.llm = llm
     Settings.embed_model = embed_model
 
+    parsed_documents = []
+    for document in documents:
+        needs_update = is_an_updated_document(index_name, document)
+        if needs_update:
+            parsed_documents.append(document)
+            delete_document(index_name=index_name, document=document)
+
     index = VectorStoreIndex.from_documents(
-        documents, storage_context=storage_context
+        parsed_documents, storage_context=storage_context
     )
 
     return index
@@ -140,3 +149,67 @@ def file_metadata(filename: str):
     # process the filename to remove the folders (if any)
     metadata['name'] = os.path.basename(filename)
     return metadata
+
+def is_an_updated_document(index_name: str, document):
+    """
+    Search for documents in the specified index by their title and return the documents along with their timestamps.
+    """
+    search_client = SearchClient(
+        endpoint=service_endpoint,
+        index_name=index_name.lower(),
+        credential=search_key_credential
+    )
+
+    search_query = f"name eq '{document.metadata['name']}'"
+    logger.info(search_query)
+
+    results = search_client.search(
+        search_text="*",  # Use wildcard to search for all documents
+        filter=search_query,
+        select=["name", "lastModifiedDateTime"]  # Specify the fields to retrieve
+    )
+
+    if results.get_count() > 1:
+        logger.info("No result(s) found, will need to update/insert document")
+        return True
+
+    for result in results:
+        try:
+            date_searched = dt.strptime(result['lastModifiedDateTime'], "%Y-%m-%dT%H:%M:%SZ")
+            date_passed = dt.strptime(document.metadata['lastModifiedDateTime'], "%Y-%m-%dT%H:%M:%SZ")
+            logger.info("The file %s and the passed date %s and the search service returned date %s",
+                        document.metadata['name'],
+                        date_passed, date_searched)
+            if date_passed > date_searched:
+                logger.info("Newer document detected")
+                return True
+        except ValueError:
+            logger.warning("Unable to format date, will skip this entry")
+    return False
+
+def delete_document(index_name: str, document):
+    """
+    Delete documents that match this name from the index passed in parameter
+    """
+    search_client = SearchClient(
+        endpoint=service_endpoint,
+        index_name=index_name.lower(),
+        credential=search_key_credential
+    )
+
+    search_query = f"name eq '{document.metadata['name']}'"
+    logger.info(search_query)
+
+    results = search_client.search(
+        search_text="*",  # Use wildcard to search for all documents
+        filter=search_query,
+        select=["name", "lastModifiedDateTime"]  # Specify the fields to retrieve
+    )
+    documents = [result for result in results]
+
+    # Extract document IDs
+    document_keys = [doc["id"] for doc in documents]
+
+    # Delete documents
+    batch = [{"@search.action": "delete", "id": key} for key in document_keys]
+    search_client.upload_documents(documents=batch)

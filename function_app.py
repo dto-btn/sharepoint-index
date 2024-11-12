@@ -204,17 +204,16 @@ def download_file(inputs):
 @app.activity_trigger(input_name="inputs")
 def index_file(inputs):
     """Loads all file from a specific folder and index them in a Azure Search Service"""
-    logger.info('Indexing file!')
     file = inputs['file']
     run_id = inputs['run_id']
     site_name = inputs['site_name']
     path = os.path.join(tempfile.gettempdir(), _DL_DIRECTORY, run_id, file['name'])
 
     # updated the code here to avoid timeout, this activity loads 1 file at the time
-    document = SimpleDirectoryReader(input_files=[path], file_metadata=utils.file_metadata).load_data()
-    document.metadata = file # technically this dict (the file) represents the metadata we need.
-
+    documents = SimpleDirectoryReader(input_files=[path], file_metadata=utils.file_metadata).load_data()
+    documents[0].metadata = file # technically this dict (the file) represents the metadata we need.
+    logger.info('Indexing file! %s (document(s) loaded: %s)', file, len(documents))
     # create the index if it doesn't exists, otherwise just populate it for now.
     # overwrite documents if metadata date is newer.
-    index = utils.save_index(site_name, document)
+    index = utils.save_index(site_name, documents)
     return index.index_id
