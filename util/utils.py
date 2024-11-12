@@ -169,7 +169,7 @@ def is_an_updated_document(index_name: str, document):
         select=["name", "lastModifiedDateTime"]  # Specify the fields to retrieve
     )
 
-    if results.get_count() > 1:
+    if results.get_count() is None or results.get_count() is 0:
         logger.info("No result(s) found, will need to update/insert document")
         return True
 
@@ -205,11 +205,13 @@ def delete_document(index_name: str, document):
         filter=search_query,
         select=["name", "lastModifiedDateTime"]  # Specify the fields to retrieve
     )
-    documents = [result for result in results]
 
-    # Extract document IDs
-    document_keys = [doc["id"] for doc in documents]
+    if not results.get_count() is None:
+        documents = [result for result in results]
 
-    # Delete documents
-    batch = [{"@search.action": "delete", "id": key} for key in document_keys]
-    search_client.upload_documents(documents=batch)
+        # Extract document IDs
+        document_keys = [doc["id"] for doc in documents]
+
+        # Delete documents
+        batch = [{"@search.action": "delete", "id": key} for key in document_keys]
+        search_client.upload_documents(documents=batch)
