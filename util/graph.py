@@ -14,6 +14,7 @@ from llama_index.embeddings.azure_openai import AzureOpenAIEmbedding
 from llama_index.llms.azure_openai import AzureOpenAI
 from llama_index.vector_stores.azureaisearch import (AzureAISearchVectorStore,
                                                      IndexManagement)
+from llama_index.core.schema import Document
 
 load_dotenv()
 
@@ -38,7 +39,12 @@ embedding_model: str = "text-embedding-ada-002"
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-__all__ = ["call_graph_api", "get_drives_info", "save_index", "file_metadata"]
+__all__ = ["call_graph_api",
+        "get_drives_info",
+        "update_index_with_document",
+        "file_metadata",
+        "is_an_updated_document",
+        "delete_document"]
 
 _METADATA_FIELDS = {
         'url': '@microsoft.graph.downloadUrl',
@@ -71,7 +77,7 @@ def get_drives_info(url: str, token: str, drives_info):
     """
     Recursive function that will populate the missing drives_id from the list
 
-    Return [{"drive_name": $drive_name, "drive_id": $drive_id}, {...}]
+    Returns a URL that is matching the passed in string
     """
     # this is the base url, we will extend it with /items/{folder_id}/children (removing /root)
     # for each items in the list
@@ -82,12 +88,11 @@ def get_drives_info(url: str, token: str, drives_info):
     for folder in result:
         if folder['name'] == drives_info[0]["drive_name"]:
             new_url = new_url + f"/items/{folder['id']}/children"
-    logger.info("---> New url ---> %s", new_url)
     if len(drives_info) > 1:
         return get_drives_info(new_url, token, drives_info[1:])
     return new_url
 
-def save_index(index_name: str, documents):
+def update_index_with_document(index_name: str, document: Document):
     """
     Create or re-use index passed in and returns vector store tied to it.
     """
@@ -130,18 +135,11 @@ def save_index(index_name: str, documents):
     Settings.llm = llm
     Settings.embed_model = embed_model
 
-    parsed_documents = []
-    for document in documents:
-        needs_update = is_an_updated_document(index_name, document)
-        if needs_update:
-            parsed_documents.append(document)
-            delete_document(index_name=index_name, document=document)
+    index = VectorStoreIndex.from_documents([document], storage_context=storage_context)
+    if index:
+        return True
+    return False
 
-    index = VectorStoreIndex.from_documents(
-        parsed_documents, storage_context=storage_context
-    )
-
-    return index
 
 def file_metadata(filename: str):
     """pre-populate metadata with filename for later."""
@@ -150,7 +148,7 @@ def file_metadata(filename: str):
     metadata['name'] = os.path.basename(filename)
     return metadata
 
-def is_an_updated_document(index_name: str, document):
+def is_an_updated_document(index_name: str, document_name: str, last_updated: str):
     """
     Search for documents in the specified index by their title and return the documents along with their timestamps.
     """
@@ -160,25 +158,27 @@ def is_an_updated_document(index_name: str, document):
         credential=search_key_credential
     )
 
-    search_query = f"name eq '{document.metadata['name']}'"
+    search_query = f"name eq '{document_name}'"
     logger.info(search_query)
 
     results = search_client.search(
         search_text="*",  # Use wildcard to search for all documents
         filter=search_query,
-        select=["name", "lastModifiedDateTime"]  # Specify the fields to retrieve
+        select=["name", "lastModifiedDateTime"],  # Specify the fields to retrieve
+        include_total_count=True
     )
 
-    if results.get_count() is None or results.get_count() is 0:
+    if results.get_count() is None or results.get_count() == 0:
+        logger.info(results.get_count())
         logger.info("No result(s) found, will need to update/insert document")
         return True
 
     for result in results:
         try:
             date_searched = dt.strptime(result['lastModifiedDateTime'], "%Y-%m-%dT%H:%M:%SZ")
-            date_passed = dt.strptime(document.metadata['lastModifiedDateTime'], "%Y-%m-%dT%H:%M:%SZ")
+            date_passed = dt.strptime(last_updated, "%Y-%m-%dT%H:%M:%SZ")
             logger.info("The file %s and the passed date %s and the search service returned date %s",
-                        document.metadata['name'],
+                        document_name,
                         date_passed, date_searched)
             if date_passed > date_searched:
                 logger.info("Newer document detected")
@@ -187,9 +187,11 @@ def is_an_updated_document(index_name: str, document):
             logger.warning("Unable to format date, will skip this entry")
     return False
 
-def delete_document(index_name: str, document):
+def delete_document(index_name: str, document_name: str):
     """
     Delete documents that match this name from the index passed in parameter
+
+    Returns an List of updated (deleted) documents
     """
     search_client = SearchClient(
         endpoint=service_endpoint,
@@ -197,7 +199,7 @@ def delete_document(index_name: str, document):
         credential=search_key_credential
     )
 
-    search_query = f"name eq '{document.metadata['name']}'"
+    search_query = f"name eq '{document_name}'"
     logger.info(search_query)
 
     results = search_client.search(
@@ -207,11 +209,10 @@ def delete_document(index_name: str, document):
     )
 
     if not results.get_count() is None:
-        documents = [result for result in results]
-
         # Extract document IDs
-        document_keys = [doc["id"] for doc in documents]
-
+        document_keys = [doc["id"] for doc in results]
         # Delete documents
+        logger.info("Deleting those documents from the index: %s", document_keys)
         batch = [{"@search.action": "delete", "id": key} for key in document_keys]
-        search_client.upload_documents(documents=batch)
+        return search_client.upload_documents(documents=batch)
+    return []

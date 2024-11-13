@@ -14,7 +14,7 @@ from azure.identity import (DefaultAzureCredential, ManagedIdentityCredential,
 from llama_index.core import SimpleDirectoryReader
 from msgraph import GraphServiceClient
 
-from util import utils
+from util import graph
 
 app = df.DFApp(http_auth_level=func.AuthLevel.FUNCTION)
 
@@ -94,16 +94,33 @@ def start(context: DurableOrchestrationContext):
     }
     url = yield context.call_activity("get_site_drive_url", inputs)
     if url:
+        # get context of search service index and everything else.
+        # TODO
+
         files = yield context.call_activity("get_files", url)
         logger.info("Got the files from the requested drive, files contained --> %s", len(files))
         for file in files:
-            downloaded = yield context.call_activity("download_file", {'file':file, 'run_id': run_id})
-            logger.info("File downloaded successfully? -> %s", downloaded)
-            file['downloaded'] = downloaded
-            # Index files downloaded.
-            indexed = yield context.call_activity("index_file", {'file':file, 'run_id': run_id, 'site_name': site_name})
-            file['indexed'] = indexed
-    return files
+            file['indexed'] = False
+            # check first if it's newer than one existing file in the index
+            is_updated = yield context.call_activity("is_document_updated",
+                                                    {
+                                                        'site_name': site_name,
+                                                        'name': file['name'],
+                                                        'lastModifiedDateTime': file['lastModifiedDateTime']
+                                                    })
+            if is_updated:
+                # delete documents that will get updated.
+                #deleted_docs = graph.delete_document(site_name, file['name'])
+                #logger.info("Deleted document(s): %s", deleted_docs)
+
+                downloaded = yield context.call_activity("download_file", {'file':file, 'run_id': run_id})
+                file['downloaded'] = downloaded
+                # Index files downloaded.
+                yield context.call_activity("index_file", {'file':file,
+                                                                     'run_id': run_id,
+                                                                     'site_name': site_name})
+                file['indexed'] = True
+    return [file for file in files if file['indexed']] # return only indexed files
 
 @app.activity_trigger(input_name="sitename") # cannot use underscore for bindings, silly regex they have wont allow it
 async def get_sharepoint_site_info(sitename: str):
@@ -140,12 +157,11 @@ async def get_site_drive_url(inputs):
             # return an empty array if the folder path was a single folder, else return the remainder of the path.
             remaining_folders = path_structure[1:] if len(path_structure) > 1 else []
             drives_info.extend({"drive_name": folder, "drive_id": ""} for folder in remaining_folders)
-            logger.info("This is the length of the drives return statement: %s", len(drives_info))
 
     # if we got more than 1 drive we need to drill down the rest of the drives without the
     # graph API Since it doesn't do that sort of recursion.
     if len(drives_info) > 1:
-        return utils.get_drives_info(
+        return graph.get_drives_info(
             f"https://graph.microsoft.com/v1.0/drives/{drives_info[0]['drive_id']}/root/children",
             _bearer_token_provider(),
             drives_info[1:])
@@ -153,7 +169,7 @@ async def get_site_drive_url(inputs):
 
 @app.activity_trigger(input_name="url")
 async def get_files(url):
-    """Should drill down folder to folder until the folders array passed is empty.
+    """Fetch a file at the url location.
 
     Returns
     ----------- 
@@ -166,7 +182,7 @@ async def get_files(url):
             } for each files
     """
     logger.info("Getting files and/or folders. Drive -> %s", url)
-    result = utils.call_graph_api(url, _bearer_token_provider(), attribute_filter="@microsoft.graph.downloadUrl")
+    result = graph.call_graph_api(url, _bearer_token_provider(), attribute_filter="@microsoft.graph.downloadUrl")
     return [{
                 'url': file['@microsoft.graph.downloadUrl'],
                 'name': file['name'],
@@ -210,10 +226,15 @@ def index_file(inputs):
     path = os.path.join(tempfile.gettempdir(), _DL_DIRECTORY, run_id, file['name'])
 
     # updated the code here to avoid timeout, this activity loads 1 file at the time
-    documents = SimpleDirectoryReader(input_files=[path], file_metadata=utils.file_metadata).load_data()
+    documents = SimpleDirectoryReader(input_files=[path], file_metadata=graph.file_metadata).load_data()
     documents[0].metadata = file # technically this dict (the file) represents the metadata we need.
-    logger.info('Indexing file! %s (document(s) loaded: %s)', file, len(documents))
+    #logger.info('Indexing file! %s (document(s) loaded: %s)', file, len(documents))
+
     # create the index if it doesn't exists, otherwise just populate it for now.
     # overwrite documents if metadata date is newer.
-    index = utils.save_index(site_name, documents)
-    return index.index_id
+    return graph.update_index_with_document(site_name, documents[0])
+
+@app.activity_trigger(input_name="inputs")
+def is_document_updated(inputs):
+    """Checks wether or not a document is present in the index, and or needs updating."""
+    return graph.is_an_updated_document(inputs['site_name'], inputs['name'], inputs['lastModifiedDateTime'])
