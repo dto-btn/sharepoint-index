@@ -1,58 +1,18 @@
 import logging
-import os
 import re
 from datetime import datetime as dt
 
 import requests
-from azure.core.credentials import AzureKeyCredential
-from azure.search.documents import SearchClient
-from azure.search.documents.indexes import SearchIndexClient
-from dotenv import load_dotenv
-from llama_index.core import StorageContext, VectorStoreIndex
-from llama_index.core.settings import Settings
-from llama_index.embeddings.azure_openai import AzureOpenAIEmbedding
-from llama_index.llms.azure_openai import AzureOpenAI
-from llama_index.vector_stores.azureaisearch import (AzureAISearchVectorStore,
-                                                     IndexManagement)
-from llama_index.core.schema import Document
 
-load_dotenv()
-
-azure_openai_uri: str   = os.getenv("AZURE_OPENAI_ENDPOINT", "UNDEFINED")
-api_key: str            = os.getenv("AZURE_OPENAI_API_KEY", "UNDEFINED")
-api_version: str        = os.getenv("AZURE_OPENAI_VERSION", "2024-05-01-preview")
-
-service_endpoint: str   = os.getenv("AZURE_SEARCH_SERVICE_ENDPOINT", "UNDEFINED")
-search_key: str          = os.getenv("AZURE_SEARCH_ADMIN_KEY", "UNDEFINED")
-api_search_version: str = os.getenv("AZURE_SEARCH_VERSION", "2024-05-01-preview")
-search_key_credential = AzureKeyCredential(search_key)
-
-index_client = SearchIndexClient(
-        endpoint=service_endpoint,
-        credential=search_key_credential,
-        api_version=api_search_version
-    )
-
-openai_model: str = "gpt-35-turbo"
-embedding_model: str = "text-embedding-ada-002"
+from .azure import get_search_client
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 __all__ = ["call_graph_api",
         "get_drives_info",
-        "update_index_with_document",
-        "file_metadata",
         "is_an_updated_document",
         "delete_document"]
-
-_METADATA_FIELDS = {
-        'url': '@microsoft.graph.downloadUrl',
-        'name': 'name',
-        'webUrl': 'webUrl',
-        'id': 'id',
-        'lastModifiedDateTime': 'lastModifiedDateTime'
-    }
 
 def call_graph_api(url: str, token: str, **kwargs):
     """
@@ -92,71 +52,11 @@ def get_drives_info(url: str, token: str, drives_info):
         return get_drives_info(new_url, token, drives_info[1:])
     return new_url
 
-def update_index_with_document(index_name: str, document: Document):
-    """
-    Create or re-use index passed in and returns vector store tied to it.
-    """
-    logger.info("Using search service endpoint: %s", service_endpoint)
-
-    vector_store = AzureAISearchVectorStore(
-        search_or_index_client=index_client,
-        filterable_metadata_field_keys=_METADATA_FIELDS,
-        index_name=index_name.lower(),
-        index_management=IndexManagement.CREATE_IF_NOT_EXISTS,
-        id_field_key="id",
-        chunk_field_key="chunk",
-        embedding_field_key="embedding",
-        embedding_dimensionality=1536,
-        metadata_string_field_key="metadata",
-        doc_id_field_key="doc_id",
-        language_analyzer="en.lucene",
-        vector_algorithm_type="exhaustiveKnn",
-        # compression_type="binary" # Option to use "scalar" or "binary". NOTE: compression is only supported for HNSW
-    )
-
-    storage_context = StorageContext.from_defaults(vector_store=vector_store)
-
-    llm = AzureOpenAI(
-        model=openai_model,
-        deployment_name=openai_model,
-        api_version=api_version,
-        azure_endpoint=azure_openai_uri,
-        api_key=api_key
-    )
-
-    embed_model = AzureOpenAIEmbedding(
-        model=embedding_model,
-        deployment_name=embedding_model,
-        api_key=api_key,
-        azure_endpoint=str(azure_openai_uri),
-        api_version=api_version
-    )
-
-    Settings.llm = llm
-    Settings.embed_model = embed_model
-
-    index = VectorStoreIndex.from_documents([document], storage_context=storage_context)
-    if index:
-        return True
-    return False
-
-
-def file_metadata(filename: str):
-    """pre-populate metadata with filename for later."""
-    metadata = _METADATA_FIELDS.copy()
-    # process the filename to remove the folders (if any)
-    metadata['name'] = os.path.basename(filename)
-    return metadata
-
 def is_an_updated_document(index_name: str, document_name: str, last_updated: str):
     """
     Search for documents in the specified index by their title and return the documents along with their timestamps.
     """
-    search_client = SearchClient(
-        endpoint=service_endpoint,
-        index_name=index_name.lower(),
-        credential=search_key_credential
-    )
+    search_client = get_search_client(index_name)
 
     search_query = f"name eq '{document_name}'"
     logger.info(search_query)
@@ -193,11 +93,7 @@ def delete_document(index_name: str, document_name: str):
 
     Returns an List of updated (deleted) documents
     """
-    search_client = SearchClient(
-        endpoint=service_endpoint,
-        index_name=index_name.lower(),
-        credential=search_key_credential
-    )
+    search_client = get_search_client(index_name)
 
     search_query = f"name eq '{document_name}'"
     logger.info(search_query)

@@ -14,7 +14,7 @@ from azure.identity import (DefaultAzureCredential, ManagedIdentityCredential,
 from llama_index.core import SimpleDirectoryReader
 from msgraph import GraphServiceClient
 
-from util import graph
+from util import graph, azure
 
 app = df.DFApp(http_auth_level=func.AuthLevel.FUNCTION)
 
@@ -94,8 +94,8 @@ def start(context: DurableOrchestrationContext):
     }
     url = yield context.call_activity("get_site_drive_url", inputs)
     if url:
-        # get context of search service index and everything else.
-        # TODO
+        # initialize the vector store.
+        azure.get_vector_store(site_name)
 
         files = yield context.call_activity("get_files", url)
         logger.info("Got the files from the requested drive, files contained --> %s", len(files))
@@ -143,6 +143,7 @@ async def get_site_drive_url(inputs):
     logger.info("The id used to retreive pages: %s", _id)
     # get drives https://graph.microsoft.com/v1.0/sites/{siteid}/drives
     drives = await _graph_client.sites.by_site_id(_id).drives.get()
+    print(drives)
     filtered_drives = [drive for drive in drives.value if drive.odata_type== "#microsoft.graph.drive"]
 
     # Here we might receive something like Documents/SubfolderA/Some Other Folder/
@@ -226,13 +227,20 @@ def index_file(inputs):
     path = os.path.join(tempfile.gettempdir(), _DL_DIRECTORY, run_id, file['name'])
 
     # updated the code here to avoid timeout, this activity loads 1 file at the time
-    documents = SimpleDirectoryReader(input_files=[path], file_metadata=graph.file_metadata).load_data()
+    documents = SimpleDirectoryReader(input_files=[path], file_metadata=file_metadata).load_data()
     documents[0].metadata = file # technically this dict (the file) represents the metadata we need.
     #logger.info('Indexing file! %s (document(s) loaded: %s)', file, len(documents))
 
     # create the index if it doesn't exists, otherwise just populate it for now.
     # overwrite documents if metadata date is newer.
-    return graph.update_index_with_document(site_name, documents[0])
+    return azure.update_index_with_document(site_name, documents[0])
+
+def file_metadata(filename: str):
+    """pre-populate metadata with filename for later."""
+    metadata = azure.METADATA_FIELDS.copy()
+    # process the filename to remove the folders (if any)
+    metadata['name'] = os.path.basename(filename)
+    return metadata
 
 @app.activity_trigger(input_name="inputs")
 def is_document_updated(inputs):
