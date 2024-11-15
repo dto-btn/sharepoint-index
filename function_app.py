@@ -218,7 +218,7 @@ def download_file(inputs):
 
     run_id = inputs['run_id']
 
-    path = os.path.join(tempfile.gettempdir(), _DL_DIRECTORY, run_id)
+    path = os.path.join(tempfile.gettempdir, run_id)
     if not os.path.exists(path):
         os.makedirs(path)
     try:
