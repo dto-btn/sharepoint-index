@@ -16,6 +16,19 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
+### Invoke the Az Func locally
+
+Debug with `F5` and then simply use postman/curl to reach the application:
+
+```bash
+curl --location --request GET 'http://localhost:7071/api/index_sharepoint_site_files' \
+--header 'Content-Type: application/json' \
+--data '{
+    "site_name": "DigitalTransformationProcessImprovement",
+    "drive_name": "Documents/Emerging Concepts and Technologies/SSC Assistant"
+}'
+```
+
 ### Az CLI
 
 In order to run this project locally you need Az CLI installed and to be logged in the sub you will be using the

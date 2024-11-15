@@ -8,4 +8,16 @@ azure-identity
 azure-functions
 azure-functions-durable
 azure-storage-blob
+azure-search-documents
 python-dotenv
+llama-index
+docx2txt
+openpyxl
+llama-index-llms-azure-openai
+llama-index-embeddings-azure-openai
+llama-index-vector-stores-azureaisearch
+python-dotenv
+torch
+transformers
+python-pptx
+Pillow
