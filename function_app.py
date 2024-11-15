@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 _DL_DIRECTORY = "sharepoint_indexer"
+_FILE_UNDERSCORE = "___"
 
 _scopes = ["https://graph.microsoft.com/.default"]
 # Determine the appropriate credential to use
@@ -88,11 +89,10 @@ def start(context: DurableOrchestrationContext):
     site_id = yield context.call_activity("get_sharepoint_site_info", site_name)
     logger.info("Got the site id -> %s", site_id)
 
-    inputs = {
+    url = yield context.call_activity("get_site_drive_url", {
         "site_id": site_id,
         "drive_name": drive_name
-    }
-    url = yield context.call_activity("get_site_drive_url", inputs)
+    })
     if url:
         # initialize the vector store.
         azure.get_vector_store(site_name)
@@ -143,7 +143,6 @@ async def get_site_drive_url(inputs):
     logger.info("The id used to retreive pages: %s", _id)
     # get drives https://graph.microsoft.com/v1.0/sites/{siteid}/drives
     drives = await _graph_client.sites.by_site_id(_id).drives.get()
-    print(drives)
     filtered_drives = [drive for drive in drives.value if drive.odata_type== "#microsoft.graph.drive"]
 
     # Here we might receive something like Documents/SubfolderA/Some Other Folder/
@@ -169,7 +168,7 @@ async def get_site_drive_url(inputs):
     return f"https://graph.microsoft.com/v1.0/drives/{drives_info[0]['drive_id']}/root/children"
 
 @app.activity_trigger(input_name="url")
-async def get_files(url):
+async def get_files(url: str):
     """Fetch a file at the url location.
 
     Returns
@@ -182,21 +181,40 @@ async def get_files(url):
                 'lastModifiedDateTime': 'lastModifiedDateTime'
             } for each files
     """
+    return get_files_via_graph_call(url)
+
+def get_files_via_graph_call(url: str):
+    """Recursive method that will get all the files from a folder and subfolder(s)"""
+    files = []
     logger.info("Getting files and/or folders. Drive -> %s", url)
-    result = graph.call_graph_api(url, _bearer_token_provider(), attribute_filter="@microsoft.graph.downloadUrl")
-    return [{
-                'url': file['@microsoft.graph.downloadUrl'],
-                'name': file['name'],
-                'webUrl': file['webUrl'],
-                'id': file['id'],
-                'lastModifiedDateTime': file['lastModifiedDateTime']
-            } for file in result]
+    results = graph.call_graph_api(url, _bearer_token_provider())  # attribute_filter="@microsoft.graph.downloadUrl"
+    for result in results:
+        if result and '@microsoft.graph.downloadUrl' in result:
+            files.append({
+                'url': result['@microsoft.graph.downloadUrl'],
+                'name': result['name'],
+                'webUrl': result['webUrl'],
+                'id': result['id'],
+                'lastModifiedDateTime': result['lastModifiedDateTime']
+            })
+        if result and 'folder' in result:
+            logger.info("found folder: %s", result['name'])
+            if result['folder']['childCount'] == 0:
+                logger.info("folder is empty!")
+            else:
+                new_url = url.split('/items')[0]
+                new_url = new_url + f"/items/{result['id']}/children"
+                logger.info("NEW URL: %s", new_url)
+                files.extend(get_files_via_graph_call(new_url))
+    return files
+
 
 @app.activity_trigger(input_name="inputs")
 def download_file(inputs):
     """Download file to filesystem"""
     url = inputs['file']['url']
     name = inputs['file']['name']
+    file_id = inputs['file']['id']
 
     run_id = inputs['run_id']
 
@@ -206,7 +224,7 @@ def download_file(inputs):
     try:
         with requests.get(url, stream=True, timeout=10) as r:
             r.raise_for_status()
-            with open(os.path.join(path, name), 'wb') as f:
+            with open(os.path.join(path, file_id + _FILE_UNDERSCORE + name), 'wb') as f:
                 for chunk in r.iter_content(chunk_size=8192):
                     f.write(chunk)
         return True
@@ -224,7 +242,7 @@ def index_file(inputs):
     file = inputs['file']
     run_id = inputs['run_id']
     site_name = inputs['site_name']
-    path = os.path.join(tempfile.gettempdir(), _DL_DIRECTORY, run_id, file['name'])
+    path = os.path.join(tempfile.gettempdir(), _DL_DIRECTORY, run_id, file['id'] + _FILE_UNDERSCORE + file['name'])
 
     # updated the code here to avoid timeout, this activity loads 1 file at the time
     documents = SimpleDirectoryReader(input_files=[path], file_metadata=file_metadata).load_data()
@@ -239,7 +257,8 @@ def file_metadata(filename: str):
     """pre-populate metadata with filename for later."""
     metadata = azure.METADATA_FIELDS.copy()
     # process the filename to remove the folders (if any)
-    metadata['name'] = os.path.basename(filename)
+    basename = os.path.basename(filename)
+    metadata['name'] = basename.split(_FILE_UNDERSCORE)[1]
     return metadata
 
 @app.activity_trigger(input_name="inputs")
