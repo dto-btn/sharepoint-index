@@ -215,13 +215,12 @@ def download_file(inputs):
     url = inputs['file']['url']
     name = inputs['file']['name']
     file_id = inputs['file']['id']
-
     run_id = inputs['run_id']
 
-    path = os.path.join(tempfile.gettempdir, run_id)
-    if not os.path.exists(path):
-        os.makedirs(path)
     try:
+        path = os.path.join(tempfile.gettempdir(), _DL_DIRECTORY, run_id)
+        if not os.path.exists(path):
+            os.makedirs(path)
         with requests.get(url, stream=True, timeout=10) as r:
             r.raise_for_status()
             with open(os.path.join(path, file_id + _FILE_UNDERSCORE + name), 'wb') as f:
