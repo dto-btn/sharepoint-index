@@ -58,13 +58,13 @@ def is_an_updated_document(index_name: str, document_name: str, last_updated: st
     """
     search_client = get_search_client(index_name)
 
-    search_query = f"name eq '{document_name}'"
+    search_query = f"title eq '{document_name}'"
     logger.info(search_query)
 
     results = search_client.search(
         search_text="*",  # Use wildcard to search for all documents
         filter=search_query,
-        select=["name", "lastModifiedDateTime"],  # Specify the fields to retrieve
+        select=["title", "lastModifiedDateTime"],  # Specify the fields to retrieve
         include_total_count=True
     )
 
@@ -95,13 +95,13 @@ def delete_document(index_name: str, document_name: str):
     """
     search_client = get_search_client(index_name)
 
-    search_query = f"name eq '{document_name}'"
+    search_query = f"title eq '{document_name}'"
     logger.info(search_query)
 
     results = search_client.search(
         search_text="*",  # Use wildcard to search for all documents
         filter=search_query,
-        select=["name", "lastModifiedDateTime"]  # Specify the fields to retrieve
+        select=["title", "lastModifiedDateTime"]  # Specify the fields to retrieve
     )
 
     if not results.get_count() is None:
