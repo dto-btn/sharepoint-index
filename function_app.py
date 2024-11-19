@@ -105,7 +105,7 @@ def start(context: DurableOrchestrationContext):
             is_updated = yield context.call_activity("is_document_updated",
                                                     {
                                                         'site_name': site_name,
-                                                        'name': file['name'],
+                                                        'name': file['title'],
                                                         'lastModifiedDateTime': file['lastModifiedDateTime']
                                                     })
             if is_updated:
@@ -174,9 +174,9 @@ async def get_files(url: str):
     Returns
     ----------- 
     Dict array {
-                'url': '@microsoft.graph.downloadUrl',
-                'name': 'name',
-                'webUrl': 'webUrl',
+                'downloadUrl': '@microsoft.graph.downloadUrl',
+                'title': 'name',
+                'url': 'webUrl',
                 'id': 'id',
                 'lastModifiedDateTime': 'lastModifiedDateTime'
             } for each files
@@ -191,9 +191,9 @@ def get_files_via_graph_call(url: str):
     for result in results:
         if result and '@microsoft.graph.downloadUrl' in result:
             files.append({
-                'url': result['@microsoft.graph.downloadUrl'],
-                'name': result['name'],
-                'webUrl': result['webUrl'],
+                'downloadUrl': result['@microsoft.graph.downloadUrl'],
+                'title': result['name'],
+                'url': result['webUrl'],
                 'id': result['id'],
                 'lastModifiedDateTime': result['lastModifiedDateTime']
             })
@@ -212,8 +212,8 @@ def get_files_via_graph_call(url: str):
 @app.activity_trigger(input_name="inputs")
 def download_file(inputs):
     """Download file to filesystem"""
-    url = inputs['file']['url']
-    name = inputs['file']['name']
+    url = inputs['file']['downloadUrl']
+    name = inputs['file']['title']
     file_id = inputs['file']['id']
     run_id = inputs['run_id']
 
@@ -241,7 +241,7 @@ def index_file(inputs):
     file = inputs['file']
     run_id = inputs['run_id']
     site_name = inputs['site_name']
-    path = os.path.join(tempfile.gettempdir(), _DL_DIRECTORY, run_id, file['id'] + _FILE_UNDERSCORE + file['name'])
+    path = os.path.join(tempfile.gettempdir(), _DL_DIRECTORY, run_id, file['id'] + _FILE_UNDERSCORE + file['title'])
 
     # updated the code here to avoid timeout, this activity loads 1 file at the time
     documents = SimpleDirectoryReader(input_files=[path], file_metadata=file_metadata).load_data()
@@ -257,7 +257,7 @@ def file_metadata(filename: str):
     metadata = azure.METADATA_FIELDS.copy()
     # process the filename to remove the folders (if any)
     basename = os.path.basename(filename)
-    metadata['name'] = basename.split(_FILE_UNDERSCORE)[1]
+    metadata['title'] = basename.split(_FILE_UNDERSCORE)[1]
     return metadata
 
 @app.activity_trigger(input_name="inputs")

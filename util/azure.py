@@ -58,9 +58,8 @@ Settings.llm = llm
 Settings.embed_model = embed_model
 
 METADATA_FIELDS = {
-        'url': '@microsoft.graph.downloadUrl',
-        'name': 'name',
-        'webUrl': 'webUrl',
+        'title': 'name',
+        'url': 'webUrl',
         'id': 'id',
         'lastModifiedDateTime': 'lastModifiedDateTime'
     }
