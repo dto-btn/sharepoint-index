@@ -69,3 +69,5 @@ func new --template "Http Trigger" --name index_sharepoint_site_files
 
 * Azure function `host.json` [documentation](https://learn.microsoft.com/en-us/azure/azure-functions/functions-host-json)
   * `local.settings.json` [documentation](https://learn.microsoft.com/en-us/azure/azure-functions/functions-develop-local#local-settings-file)
+* Microsoft graph API, direct access to site id: https://163dev.sharepoint.com/sites/AssistantHome/_api/site/id
+  * just append `_api/site/id`, [some documentation on the using this method](https://marczak.io/posts/2023/01/sharepoint-graph-and-azure-sp/)

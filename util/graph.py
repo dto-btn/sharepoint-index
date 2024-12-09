@@ -95,7 +95,7 @@ def delete_document(index_name: str, document_name: str):
     """
     search_client = get_search_client(index_name)
 
-    search_query = f"title eq '{document_name}'"
+    search_query = f"title eq '{escape_azure_search_special_chars(document_name)}'"
     logger.info(search_query)
 
     results = search_client.search(
@@ -112,3 +112,12 @@ def delete_document(index_name: str, document_name: str):
         batch = [{"@search.action": "delete", "id": key} for key in document_keys]
         return search_client.upload_documents(documents=batch)
     return []
+
+def escape_azure_search_special_chars(s):
+    """
+    Function to escape special characters for Azure Search
+
+    Used AI to get this one.
+    """
+    special_chars = r'[\+\-\&\|\!\(\)\{\}\[\]\^\"\~\*\?\:\\/]'
+    return re.sub(special_chars, r'\\\g<0>', s)
