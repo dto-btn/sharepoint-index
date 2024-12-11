@@ -84,3 +84,39 @@ resource "azurerm_linux_function_app" "functions" {
 
   #virtual_network_subnet_id = data.azurerm_subnet.subscription-vnet-sub.id
 }
+
+resource "azurerm_service_plan" "main" {
+  name                = "${var.name_prefix}${var.project_name}-plan"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  sku_name = "WS1"
+  os_type = "Windows"
+}
+
+resource "azurerm_logic_app_standard" "main" {
+  name                       = "${replace(var.project_name, "_", "-")}-logic-app"
+  location                   = azurerm_resource_group.main.location
+  resource_group_name        = azurerm_resource_group.main.name
+  app_service_plan_id        = azurerm_service_plan.main.id
+  storage_account_name       = azurerm_storage_account.main.name
+  storage_account_access_key = azurerm_storage_account.main.primary_access_key
+  version = "~4"
+
+  identity {
+    type = "SystemAssigned"
+  }
+  app_settings = {
+    "FUNCTIONS_WORKER_RUNTIME" = "dotnet"
+  }
+}
+
+data "azurerm_managed_api" "sharepoint" {
+  name     = "sharepointonline"
+  location = var.default_location
+}
+
+resource "azurerm_api_connection" "sharepoint" {
+    name = "sharepoint-api-connection"
+    resource_group_name = azurerm_resource_group.main.name
+    managed_api_id = data.azurerm_managed_api.sharepoint.id
+}
